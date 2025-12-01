@@ -1,0 +1,44 @@
+# Build outputs
+**/bin/
+**/obj/
+**/Debug/
+**/Release/
+
+# Dependencies
+**/node_modules/
+**/package-lock.json
+
+# IDE/Editor files
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln.docstates
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+
+# Old project structure (cleanup)
+/bin/
+/obj/
+/ToDoListReact-master/
+
+# Development certificates
+*.pfx
+*.p12
+
+# Backup files
+*.bak
