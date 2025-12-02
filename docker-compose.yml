@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  # MySQL Database
+  database:
+    image: mysql:8.0
+    container_name: todoapi-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: todoapi
+      MYSQL_USER: todouser
+      MYSQL_PASSWORD: todopassword
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init-db:/docker-entrypoint-initdb.d
+    networks:
+      - todoapi-network
+    restart: unless-stopped
+
+  # Backend API
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: todoapi-backend
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__ToDoDB=server=database;port=3306;user=todouser;password=todopassword;database=todoapi;SslMode=none;
+    ports:
+      - "5090:80"
+    depends_on:
+      - database
+    networks:
+      - todoapi-network
+    restart: unless-stopped
+    volumes:
+      - ./server/appsettings.json:/app/appsettings.json
+
+  # Frontend React App
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: todoapi-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - todoapi-network
+    restart: unless-stopped
+
+networks:
+  todoapi-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
