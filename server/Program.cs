@@ -84,15 +84,15 @@ builder.Services.AddScoped<JwtService>();
 var app = builder.Build();
 
 // קונפיגורציה של pipeline
-if (app.Environment.IsDevelopment())
-{
+// if (app.Environment.IsDevelopment())
+// {
     app.UseSwagger();
     app.UseSwaggerUI(c =>
     {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "Calendar Events API v1");
         c.RoutePrefix = "swagger";
     });
-}
+// }
 
 app.UseCors("AllowReactApp");
 app.UseAuthentication();
@@ -175,7 +175,7 @@ app.MapGet("/api/auth/verify", [Authorize] (ClaimsPrincipal user) =>
 // ===============================
 // Todo Routes (מוגנות בהזדהות)
 // ===============================
-
+app.MapGet("/", () => Results.Ok("API is running"));
 // קבלת כל המשימות של המשתמש המחובר
 app.MapGet("/api/events", async (ToDoDbContext db) =>
 {
