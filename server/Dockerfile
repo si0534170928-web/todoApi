@@ -1,12 +1,16 @@
+# Stage 1: Build
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /source
 
-# Copy everything and restore
-COPY ["./TodoApi.csproj", "./"]
+# Copy only the csproj first
+COPY ["TodoApi.csproj", "./"]
 RUN dotnet restore
+
+# Copy everything else
+COPY . .
 RUN dotnet publish -c Release -o /app
 
-# Runtime stage
+# Stage 2: Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
 COPY --from=build /app .
