@@ -75,100 +75,100 @@ axios.interceptors.request.use(
 );
 
 export default {
-  // שליפת כל האירועים
-  getAllEvents: async () => {
+  // שליפת כל המשימות
+  getAllTodos: async () => {
     try {
       const result = await axios.get('/api/events');
       return result.data;
     } catch (error) {
-      console.error('Failed to get events:', error);
+      console.error('Failed to get todos:', error);
       throw error;
     }
   },
 
-  // שליפת אירועים לתאריך מסוים
-  getEventsByDate: async (date) => {
+  // שליפת משימות לתאריך מסוים
+  getTodosByDate: async (date) => {
     try {
       const formattedDate = date.toISOString().split('T')[0];
       const result = await axios.get(`/api/events/date/${formattedDate}`);
       return result.data;
     } catch (error) {
-      console.error('Failed to get events by date:', error);
+      console.error('Failed to get todos by date:', error);
       throw error;
     }
   },
 
-  // שליפת אירועים לחודש מסוים
-  getEventsByMonth: async (year, month) => {
+  // שליפת משימות לחודש מסוים
+  getTodosByMonth: async (year, month) => {
     try {
       const result = await axios.get(`/api/events/month/${year}/${month}`);
       return result.data;
     } catch (error) {
-      console.error('Failed to get events by month:', error);
+      console.error('Failed to get todos by month:', error);
       throw error;
     }
   },
 
-  // הוספת אירוע חדש
-  addEvent: async (event) => {
+  // הוספת משימה חדשה
+  addTodo: async (todo) => {
     try {
-      console.log('Adding new event:', event);
+      console.log('Adding new todo:', todo);
       const result = await axios.post('/api/events', {
-        title: event.title || 'אירוע חדש',
-        description: event.description || '',
-        createdDate: event.createdDate || new Date().toISOString(),
+        title: todo.title || 'משימה חדשה',
+        description: todo.description || '',
+        createdDate: todo.createdDate || new Date().toISOString(),
         isCompleted: false
       });
       return result.data;
     } catch (error) {
-      console.error('Failed to add event:', error);
+      console.error('Failed to add todo:', error);
       throw error;
     }
   },
 
-  // עדכון סטטוס השלמה של אירוע
-  toggleEventComplete: async (id) => {
+  // עדכון סטטוס השלמה של משימה
+  toggleTodoComplete: async (id) => {
     try {
-      console.log('Toggling event completion:', { id });
+      console.log('Toggling todo completion:', { id });
       const result = await axios.patch(`/api/events/${id}/complete`);
       return result.data;
     } catch (error) {
-      console.error('Failed to toggle event completion:', error);
+      console.error('Failed to toggle todo completion:', error);
       throw error;
     }
   },
 
-  // עדכון אירוע מלא
-  updateEvent: async (id, updatedEvent) => {
+  // עדכון משימה מלאה
+  updateTodo: async (id, updatedTodo) => {
     try {
-      console.log('Updating event:', { id, updatedEvent });
-      const result = await axios.put(`/api/events/${id}`, updatedEvent);
+      console.log('Updating todo:', { id, updatedTodo });
+      const result = await axios.put(`/api/events/${id}`, updatedTodo);
       return result.data;
     } catch (error) {
-      console.error('Failed to update event:', error);
+      console.error('Failed to update todo:', error);
       throw error;
     }
   },
 
-  // שליפת אירוע ספציפי לפי ID
-  getEventById: async (id) => {
+  // שליפת משימה ספציפית לפי ID
+  getTodoById: async (id) => {
     try {
       const result = await axios.get(`/api/events/${id}`);
       return result.data;
     } catch (error) {
-      console.error('Failed to get event by id:', error);
+      console.error('Failed to get todo by id:', error);
       throw error;
     }
   },
 
-  // מחיקת אירוע
-  deleteEvent: async (id) => {
+  // מחיקת משימה
+  deleteTodo: async (id) => {
     try {
-      console.log('Deleting event:', id);
+      console.log('Deleting todo:', id);
       const result = await axios.delete(`/api/events/${id}`);
       return result.data;
     } catch (error) {
-      console.error('Failed to delete event:', error);
+      console.error('Failed to delete todo:', error);
       throw error;
     }
   },
@@ -176,21 +176,47 @@ export default {
   // === LEGACY SUPPORT (for backward compatibility) ===
   // שליפת כל המשימות (תואם לקוד הישן)
   getTasks: async () => {
-    return await this.getAllEvents();
+    return await this.getAllTodos();
   },
 
   // הוספת משימה חדשה (תואם לקוד הישן)
   addTask: async (todo) => {
-    return await this.addEvent(todo);
+    return await this.addTodo(todo);
   },
 
   // עדכון סטטוס השלמה של משימה (תואם לקוד הישן)
   setCompleted: async (id, isComplete) => {
-    return await this.toggleEventComplete(id);
+    return await this.toggleTodoComplete(id);
   },
 
   // מחיקת משימה (תואם לקוד הישן)
   deleteTask: async (id) => {
-    return await this.deleteEvent(id);
+    return await this.deleteTodo(id);
+  },
+
+  // === EVENT COMPATIBILITY (backward compatibility for calendar code) ===
+  getAllEvents: async () => {
+    return await this.getAllTodos();
+  },
+  getEventsByDate: async (date) => {
+    return await this.getTodosByDate(date);
+  },
+  getEventsByMonth: async (year, month) => {
+    return await this.getTodosByMonth(year, month);
+  },
+  addEvent: async (event) => {
+    return await this.addTodo(event);
+  },
+  toggleEventComplete: async (id) => {
+    return await this.toggleTodoComplete(id);
+  },
+  updateEvent: async (id, updated) => {
+    return await this.updateTodo(id, updated);
+  },
+  getEventById: async (id) => {
+    return await this.getTodoById(id);
+  },
+  deleteEvent: async (id) => {
+    return await this.deleteTodo(id);
   }
 };

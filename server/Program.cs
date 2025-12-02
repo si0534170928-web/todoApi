@@ -1,224 +1,324 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.Security.Claims;
+using System.Text;
 using TodoApi.Data;
 using TodoApi.Models;
+using TodoApi.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// הוספת Swagger לתיעוד API
+// הוספת שירותי CORS
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowReactApp", policy =>
+    {
+        policy.WithOrigins("http://localhost:3000", "http://localhost:3001")
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials();
+    });
+});
+
+// הוספת שירותי Swagger
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
     {
-        Title = "Calendar Events API",
+        Title = "Calendar Events API with Authentication",
         Version = "v1",
-        Description = "API לניהול אירועים בלוח שנה (Calendar Events)",
-        Contact = new Microsoft.OpenApi.Models.OpenApiContact
-        {
-            Name = "Calendar API Team",
-            Email = "support@calendarapi.com"
-        }
+        Description = "API לניהול אירועים בלוח שנה עם מנגנון זיהוי"
     });
 });
 
-// הגדרת CORS - מאפשר גישה לכל הדומיינים
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowAll", policy =>
-    {
-        policy.AllowAnyOrigin()
-              .AllowAnyMethod()
-              .AllowAnyHeader();
-    });
-});
-
-// הוספת DbContext לשירותים
+// הוספת שירות בסיס הנתונים
 builder.Services.AddDbContext<ToDoDbContext>(options =>
-    options.UseMySql(builder.Configuration.GetConnectionString("ToDoDB"),
-    ServerVersion.AutoDetect(builder.Configuration.GetConnectionString("ToDoDB"))));
+{
+    var connectionString = builder.Configuration.GetConnectionString("ToDoDB");
+    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString));
+});
+
+// הוספת Identity
+builder.Services.AddIdentity<User, IdentityRole>(options =>
+{
+    options.Password.RequiredLength = 6;
+    options.Password.RequireNonAlphanumeric = false;
+    options.Password.RequireUppercase = false;
+    options.Password.RequireLowercase = false;
+    options.Password.RequireDigit = false;
+})
+.AddEntityFrameworkStores<ToDoDbContext>()
+.AddDefaultTokenProviders();
+
+// הוספת JWT Authentication
+var jwtSettings = builder.Configuration.GetSection("JwtSettings");
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(jwtSettings["SecretKey"]!)),
+        ValidateIssuer = true,
+        ValidIssuer = jwtSettings["Issuer"],
+        ValidateAudience = true,
+        ValidAudience = jwtSettings["Audience"],
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.Zero
+    };
+});
+
+builder.Services.AddAuthorization();
+
+// הוספת שירות JWT
+builder.Services.AddScoped<JwtService>();
 
 var app = builder.Build();
 
-// הפעלת CORS
-app.UseCors("AllowAll");
-
-// הפעלת Swagger בסביבת פיתוח
+// קונפיגורציה של pipeline
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI(c =>
     {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "Calendar Events API v1");
-        c.RoutePrefix = "swagger"; // Swagger UI יהיה זמין ב: /swagger
-        c.DocumentTitle = "Calendar Events API Documentation";
+        c.RoutePrefix = "swagger";
     });
 }
 
+app.UseCors("AllowReactApp");
+app.UseAuthentication();
+app.UseAuthorization();
+
 // ===============================
-// CALENDAR EVENTS API ROUTES
+// Auth Routes
 // ===============================
 
-// GET /api/events - שליפת כל האירועים
-app.MapGet("/api/events", async (ToDoDbContext context) =>
+// הרשמה
+app.MapPost("/api/auth/register", async (RegisterRequest request, UserManager<User> userManager, JwtService jwtService) =>
 {
-    var events = await context.Todos.OrderBy(t => t.CreatedDate).ToListAsync();
-    return Results.Ok(events);
+    if (await userManager.FindByNameAsync(request.UserName) != null)
+        return Results.BadRequest(new { message = "שם המשתמש כבר קיים" });
+
+    if (await userManager.FindByEmailAsync(request.Email) != null)
+        return Results.BadRequest(new { message = "האימייל כבר קיים במערכת" });
+
+    var user = new User
+    {
+        UserName = request.UserName,
+        Email = request.Email,
+        DisplayName = request.DisplayName
+    };
+
+    var result = await userManager.CreateAsync(user, request.Password);
+
+    if (!result.Succeeded)
+        return Results.BadRequest(new { message = "שגיאה ביצירת המשתמש", errors = result.Errors });
+
+    var token = jwtService.GenerateToken(user);
+
+    return Results.Ok(new AuthResponse
+    {
+        Token = token,
+        UserName = user.UserName,
+        DisplayName = user.DisplayName ?? "",
+        Email = user.Email ?? "",
+        Expires = DateTime.UtcNow.AddDays(7)
+    });
+})
+.WithName("Register")
+.WithSummary("הרשמת משתמש חדש");
+
+// התחברות
+app.MapPost("/api/auth/login", async (LoginRequest request, UserManager<User> userManager, JwtService jwtService) =>
+{
+    var user = await userManager.FindByNameAsync(request.UserName);
+    if (user == null || !await userManager.CheckPasswordAsync(user, request.Password))
+        return Results.Unauthorized();
+
+    var token = jwtService.GenerateToken(user);
+
+    return Results.Ok(new AuthResponse
+    {
+        Token = token,
+        UserName = user.UserName ?? "",
+        DisplayName = user.DisplayName ?? "",
+        Email = user.Email ?? "",
+        Expires = DateTime.UtcNow.AddDays(7)
+    });
+})
+.WithName("Login")
+.WithSummary("התחברות משתמש");
+
+// בדיקת טוקן
+app.MapGet("/api/auth/verify", [Authorize] (ClaimsPrincipal user) =>
+{
+    return Results.Ok(new
+    {
+        userId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value,
+        userName = user.FindFirst(ClaimTypes.Name)?.Value,
+        displayName = user.FindFirst("DisplayName")?.Value,
+        email = user.FindFirst(ClaimTypes.Email)?.Value
+    });
+})
+.WithName("VerifyToken")
+.WithSummary("אימות טוקן");
+
+// ===============================
+// Todo Routes (מוגנות בהזדהות)
+// ===============================
+
+// קבלת כל המשימות של המשתמש המחובר
+app.MapGet("/api/events", async (ToDoDbContext db) =>
+{
+    // For testing purposes, use a default user ID
+    var defaultUserId = "default-user";
+
+    var todos = await db.Todos
+        .Where(t => t.UserId == defaultUserId)
+        .OrderByDescending(t => t.CreatedDate)
+        .ToListAsync();
+
+    return Results.Ok(todos);
 })
 .WithName("GetAllEvents")
-.WithSummary("שליפת כל האירועים")
-.WithDescription("מחזיר רשימה של כל האירועים במערכת")
-.Produces<List<Todo>>(200)
-.ProducesProblem(500);
+.WithSummary("שליפת כל האירועים של המשתמש");
 
-// GET /api/events/date/{date} - שליפת אירועים לתאריך מסוים
-app.MapGet("/api/events/date/{date}", async (DateTime date, ToDoDbContext context) =>
+// קבלת משימה ספציפית
+app.MapGet("/api/events/{id}", [Authorize] async (ToDoDbContext db, ClaimsPrincipal user, int id) =>
 {
-    var startDate = date.Date;
-    var endDate = startDate.AddDays(1);
-    
-    var events = await context.Todos
-        .Where(t => t.CreatedDate >= startDate && t.CreatedDate < endDate)
-        .ToListAsync();
-    
-    return Results.Ok(events);
+    var userId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    if (string.IsNullOrEmpty(userId)) return Results.Unauthorized();
+
+    var todo = await db.Todos.FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
+    if (todo == null) return Results.NotFound();
+
+    return Results.Ok(todo);
+})
+.WithName("GetEvent")
+.WithSummary("שליפת אירוע ספציפי");
+
+// קבלת משימות לפי תאריך
+app.MapGet("/api/events/date/{date}", [Authorize] async (ToDoDbContext db, ClaimsPrincipal user, string date) =>
+{
+    var userId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    if (string.IsNullOrEmpty(userId)) return Results.Unauthorized();
+
+    if (DateTime.TryParse(date, out var targetDate))
+    {
+        var todos = await db.Todos
+            .Where(t => t.UserId == userId && t.CreatedDate.Date == targetDate.Date)
+            .ToListAsync();
+        return Results.Ok(todos);
+    }
+    return Results.BadRequest("תאריך לא תקין");
 })
 .WithName("GetEventsByDate")
-.WithSummary("שליפת אירועים לתאריך")
-.WithDescription("מחזיר רשימה של אירועים לתאריך מסוים")
-.Produces<List<Todo>>(200)
-.ProducesProblem(500);
+.WithSummary("שליפת אירועים לתאריך");
 
-// GET /api/events/month/{year}/{month} - שליפת אירועים לחודש מסוים
-app.MapGet("/api/events/month/{year:int}/{month:int}", async (int year, int month, ToDoDbContext context) =>
+// קבלת משימות לפי חודש
+app.MapGet("/api/events/month/{year}/{month}", [Authorize] async (ToDoDbContext db, ClaimsPrincipal user, int year, int month) =>
 {
+    var userId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    if (string.IsNullOrEmpty(userId)) return Results.Unauthorized();
+
     var startDate = new DateTime(year, month, 1);
     var endDate = startDate.AddMonths(1);
-    
-    var events = await context.Todos
-        .Where(t => t.CreatedDate >= startDate && t.CreatedDate < endDate)
+
+    var todos = await db.Todos
+        .Where(t => t.UserId == userId && t.CreatedDate >= startDate && t.CreatedDate < endDate)
         .ToListAsync();
-    
-    return Results.Ok(events);
+
+    return Results.Ok(todos);
 })
 .WithName("GetEventsByMonth")
-.WithSummary("שליפת אירועים לחודש")
-.WithDescription("מחזיר רשימה של אירועים לחודש מסוים")
-.Produces<List<Todo>>(200)
-.ProducesProblem(500);
+.WithSummary("שליפת אירועים לפי חודש");
 
-// GET /api/events/{id} - שליפת אירוע ספציפי לפי ID
-app.MapGet("/api/events/{id:int}", async (int id, ToDoDbContext context) =>
+// יצירת משימה חדשה
+app.MapPost("/api/events", async (ToDoDbContext db, Todo todo) =>
 {
-    var eventItem = await context.Todos.FindAsync(id);
-    return eventItem is not null ? Results.Ok(eventItem) : Results.NotFound();
-})
-.WithName("GetEventById")
-.WithSummary("שליפת אירוע לפי ID")
-.WithDescription("מחזיר אירוע ספציפי לפי המזהה שלו")
-.Produces<Todo>(200)
-.Produces(404)
-.ProducesProblem(500);
+    var defaultUserId = "default-user";
 
-// POST /api/events - הוספת אירוע חדש
-app.MapPost("/api/events", async (Todo newEvent, ToDoDbContext context) =>
-{
-    // הגדרת ערכי ברירת מחדל
-    if (string.IsNullOrEmpty(newEvent.Title))
-        return Results.BadRequest("כותרת האירוע היא שדה חובה");
-    
-    if (string.IsNullOrEmpty(newEvent.Description))
-        newEvent.Description = "";
-    
-    // אם לא נשלח תאריך, נשתמש בתאריך של היום
-    if (newEvent.CreatedDate == DateTime.MinValue)
-        newEvent.CreatedDate = DateTime.Now;
-    
-    newEvent.IsCompleted = false;
-    newEvent.CompletedDate = null;
-    
-    context.Todos.Add(newEvent);
-    await context.SaveChangesAsync();
-    
-    return Results.Created($"/api/events/{newEvent.Id}", newEvent);
+    if (string.IsNullOrEmpty(todo.Title))
+        return Results.BadRequest("כותרת המשימה היא שדה חובה");
+
+    todo.UserId = defaultUserId;
+    todo.IsCompleted = false;
+    todo.CompletedDate = null;
+
+    if (todo.CreatedDate == DateTime.MinValue)
+        todo.CreatedDate = DateTime.Now;
+
+    db.Todos.Add(todo);
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/api/events/{todo.Id}", todo);
 })
 .WithName("CreateEvent")
-.WithSummary("יצירת אירוע חדש")
-.WithDescription("יוצר אירוע חדש במערכת")
-.Accepts<Todo>("application/json")
-.Produces<Todo>(201)
-.ProducesValidationProblem(400)
-.ProducesProblem(500);
+.WithSummary("יצירת אירוע חדש");
 
-// PUT /api/events/{id} - עדכון אירוע מלא
-app.MapPut("/api/events/{id:int}", async (int id, Todo updatedEvent, ToDoDbContext context) =>
+// עדכון משימה
+app.MapPut("/api/events/{id}", async (ToDoDbContext db, int id, Todo updatedTodo) =>
 {
-    var existingEvent = await context.Todos.FindAsync(id);
-    if (existingEvent is null)
-        return Results.NotFound();
+    var defaultUserId = "default-user";
 
-    // שמירת ID
-    updatedEvent.Id = id;
-    
-    // עדכון תאריך השלמה אם האירוע הושלם
-    if (updatedEvent.IsCompleted && !existingEvent.IsCompleted)
-        updatedEvent.CompletedDate = DateTime.Now;
-    else if (!updatedEvent.IsCompleted)
-        updatedEvent.CompletedDate = null;
+    var todo = await db.Todos.FirstOrDefaultAsync(t => t.Id == id && t.UserId == defaultUserId);
+    if (todo == null) return Results.NotFound();
 
-    context.Entry(existingEvent).CurrentValues.SetValues(updatedEvent);
-    await context.SaveChangesAsync();
-    
-    return Results.Ok(updatedEvent);
+    todo.Title = updatedTodo.Title ?? todo.Title;
+    todo.Description = updatedTodo.Description ?? todo.Description;
+
+    if (updatedTodo.IsCompleted && !todo.IsCompleted)
+        todo.CompletedDate = DateTime.Now;
+    else if (!updatedTodo.IsCompleted && todo.IsCompleted)
+        todo.CompletedDate = null;
+
+    todo.IsCompleted = updatedTodo.IsCompleted;
+
+    await db.SaveChangesAsync();
+    return Results.Ok(todo);
 })
 .WithName("UpdateEvent")
-.WithSummary("עדכון אירוע")
-.WithDescription("מעדכן אירוע קיים במערכת")
-.Accepts<Todo>("application/json")
-.Produces<Todo>(200)
-.Produces(404)
-.ProducesProblem(500);
+.WithSummary("עדכון אירוע");
 
-// PATCH /api/events/{id}/complete - סימון אירוע כהושלם
-app.MapPatch("/api/events/{id:int}/complete", async (int id, ToDoDbContext context) =>
+// החלפת סטטוס השלמה של משימה
+app.MapPatch("/api/events/{id}/complete", async (ToDoDbContext db, int id) =>
 {
-    var eventItem = await context.Todos.FindAsync(id);
-    if (eventItem is null)
-        return Results.NotFound();
+    var defaultUserId = "default-user";
 
-    eventItem.IsCompleted = !eventItem.IsCompleted;
-    eventItem.CompletedDate = eventItem.IsCompleted ? DateTime.Now : null;
-    await context.SaveChangesAsync();
-    
-    return Results.Ok(eventItem);
+    var todo = await db.Todos.FirstOrDefaultAsync(t => t.Id == id && t.UserId == defaultUserId);
+    if (todo == null) return Results.NotFound();
+
+    todo.IsCompleted = !todo.IsCompleted;
+    todo.CompletedDate = todo.IsCompleted ? DateTime.Now : null;
+
+    await db.SaveChangesAsync();
+    return Results.Ok(todo);
 })
-.WithName("CompleteEvent")
-.WithSummary("סימון אירוע כהושלם")
-.WithDescription("מחליף את סטטוס ההשלמה של האירוע")
-.Produces<Todo>(200)
-.Produces(404)
-.ProducesProblem(500);
+.WithName("ToggleEventComplete")
+.WithSummary("החלפת סטטוס השלמה של אירוע");
 
-// DELETE /api/events/{id} - מחיקת אירוע
-app.MapDelete("/api/events/{id:int}", async (int id, ToDoDbContext context) =>
+// מחיקת משימה
+app.MapDelete("/api/events/{id}", async (ToDoDbContext db, int id) =>
 {
-    var eventItem = await context.Todos.FindAsync(id);
-    if (eventItem is null)
-        return Results.NotFound();
+    var defaultUserId = "default-user";
 
-    context.Todos.Remove(eventItem);
-    await context.SaveChangesAsync();
-    
-    return Results.Ok(eventItem);
+    var todo = await db.Todos.FirstOrDefaultAsync(t => t.Id == id && t.UserId == defaultUserId);
+    if (todo == null) return Results.NotFound();
+
+    db.Todos.Remove(todo);
+    await db.SaveChangesAsync();
+    return Results.NoContent();
 })
 .WithName("DeleteEvent")
-.WithSummary("מחיקת אירוע")
-.WithDescription("מוחק אירוע מהמערכת")
-.Produces<Todo>(200)
-.Produces(404)
-.ProducesProblem(500);
-
-// ===============================
-// הפעלת האפליקציה
-// ===============================
+.WithSummary("מחיקת אירוע");
 
 app.Run();
